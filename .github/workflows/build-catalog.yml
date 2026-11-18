@@ -2,54 +2,58 @@
 name: Build Material Catalog
 
 on:
-  workflow_dispatch:
-    inputs:
-      build_type:
-        description: APK build type
-        required: true
-        default: debug
-        type: choice
-        options:
-          - debug
-          - release-debug
-
   push:
-    branches:
-      - master
-      - main
+    branches-ignore:
+      - 'renovate/**'
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+      - '.idea/**'
+
+  pull_request:
+
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: Build Catalog APK
+    name: Build Material Catalog Release APK
     runs-on: ubuntu-latest
 
-    env:
-      BUILD_TYPE: ${{ inputs.build_type || 'debug' }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: true
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
-      - name: Configure release debug signing
-        if: env.BUILD_TYPE == 'release-debug'
+      - name: Grant execute permission
+        run: chmod +x gradlew
+
+      - name: Configure debug signing for release
         shell: bash
         run: |
-          cat > /tmp/catalog-debug-signing.init.gradle <<'EOF'
+          cat > "$RUNNER_TEMP/debug-signing.init.gradle" <<'EOF'
           gradle.projectsEvaluated {
               def catalog = gradle.rootProject.findProject(':catalog')
 
@@ -60,35 +64,16 @@ jobs:
           }
           EOF
 
-      - name: Build debug APK
-        if: env.BUILD_TYPE == 'debug'
+      - name: Build Catalog Release APK
         run: |
-          chmod +x ./gradlew
-          ./gradlew --no-daemon :catalog:assembleDebug
-
-      - name: Build release APK (debug signed)
-        if: env.BUILD_TYPE == 'release-debug'
-        run: |
-          chmod +x ./gradlew
           ./gradlew --no-daemon \
-            -I /tmp/catalog-debug-signing.init.gradle \
+            -I "$RUNNER_TEMP/debug-signing.init.gradle" \
             :catalog:assembleRelease
 
-      - name: Upload debug APK
-        if: env.BUILD_TYPE == 'debug'
-        uses: actions/upload-artifact@v4
-        with:
-          name: material-catalog-debug
-          path: catalog/build/outputs/apk/debug/catalog-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload release APK
-        if: env.BUILD_TYPE == 'release-debug'
-        uses: actions/upload-artifact@v4
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v7
         with:
           name: material-catalog-release-debug-signed
-          path: catalog/build/outputs/apk/release/catalog-release.apk
+          path: catalog/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
-          
